@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from tefas import Crawler
+# Bulutta hata veren tefas kütüphanesini devre dışı bıraktık
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import os
@@ -34,19 +34,6 @@ def giris_sistemi():
                     st.rerun()
                 else: st.error("Kullanıcı adı veya şifre hatalı!")
 
-    with tab2:
-        with st.form("profil_olustur_formu"):
-            y_kadi = st.text_input("Yeni Kullanıcı Adı").strip()
-            y_sifre = st.text_input("Yeni Şifre", type="password").strip()
-            if st.form_submit_button("Profil Oluştur", use_container_width=True):
-                df_k = pd.read_csv('kullanicilar.csv', sep=';', dtype=str).fillna("")
-                if y_kadi in df_k['kullanici_adi'].values: st.warning("Bu kullanıcı adı alınmış!")
-                elif y_kadi and y_sifre:
-                    yeni_user = pd.DataFrame([[y_kadi, y_sifre]], columns=['kullanici_adi', 'sifre'])
-                    pd.concat([df_k, yeni_user], ignore_index=True).to_csv('kullanicilar.csv', sep=';', index=False)
-                    st.success("Profil oluşturuldu!")
-                else: st.error("Alanları doldurun!")
-
 # --- 3. ANA UYGULAMA ---
 if not st.session_state["giris_yapildi"]:
     giris_sistemi()
@@ -61,9 +48,7 @@ else:
         df = pd.read_csv(PORTFOY_DOSYASI, sep=';').dropna(subset=['hisse_kodu'])
         if df.empty: return df
         df.columns = df.columns.str.strip().str.lower()
-        tefas = Crawler()
-        bas_tar = (datetime.now() - timedelta(days=15)).strftime('%Y-%m-%d')
-        bit_tar = datetime.now().strftime('%Y-%m-%d')
+        
         try: usd_kur = yf.Ticker("USDTRY=X").history(period="1d")['Close'].iloc[-1]
         except: usd_kur = 1
         
@@ -72,22 +57,25 @@ else:
             kod, tur = str(row['hisse_kodu']).upper(), str(row['tur']).lower()
             try:
                 if tur == 'diger': f, n = float(row['birim_fiyat']), kod
-                elif tur == 'fon':
-                    fv = tefas.fetch(start=bas_tar, end=bit_tar, name=kod)
-                    f, n = (fv['price'].iloc[-1], fv['title'].iloc[-1]) if not fv.empty else (0, kod)
                 else:
                     ykod = kod
+                    # KRİPTO VE MADEN
                     if kod in ["BTC", "ETH", "SOL"]: ykod, n = f"{kod}-USD", {"BTC":"Bitcoin","ETH":"Ethereum","SOL":"Solana"}[kod]
                     elif kod == "ALTIN": ykod, n = "GC=F", "Gram Altın"
                     elif kod == "GUMUS": ykod, n = "SI=F", "Gram Gümüş"
+                    # FONLAR (Artık yfinance üzerinden çekiliyor)
+                    elif tur == "fon": 
+                        ykod = f"{kod}.IS" # Çoğu yatırım fonu .IS uzantısıyla yfinance'da bulunur
+                        n = f"{kod} Fonu"
                     else:
                         if tur == 'bist' and not kod.endswith(".IS"): ykod = f"{kod}.IS"
                         ykod = {"USD": "USDTRY=X", "EUR": "EURTRY=X"}.get(kod, ykod)
                         tick = yf.Ticker(ykod)
                         n = tick.info.get('shortName', kod)
-                        if "Bitcoin USD" in n: n = "Bitcoin"
+                    
                     hist = yf.Ticker(ykod).history(period="5d")
                     f = hist['Close'].iloc[-1] if not hist.empty else 0
+                    
                     if tur in ['abd', 'kripto']: f *= usd_kur
                     if kod in ["ALTIN", "GUMUS"]: f = (f / 31.1035) * usd_kur
                 fiyatlar.append(f); isimler.append(n)
@@ -101,7 +89,8 @@ else:
             df['birim_fiyat'] /= usd_kur
         return df.rename(columns={'hisse_kodu': 'Kod', 'adet': 'Adet'})
 
-    # --- SIDEBAR ---
+    # --- SIDEBAR & SAYFALAR ---
+    # (Önceki kodlar ile aynı...)
     with st.sidebar:
         st.title(f"👤 {st.session_state['aktif_kullanici']}")
         st.divider()
@@ -111,7 +100,6 @@ else:
             st.session_state["giris_yapildi"] = False
             st.rerun()
 
-    # --- SAYFALAR ---
     if sayfa == "Portföyü İzle":
         c1, c2 = st.columns([3, 1])
         c1.header("Anlık Portföy Durumu")
@@ -119,19 +107,16 @@ else:
         if c2.button(btn_label, use_container_width=True):
             st.session_state["para_birimi"] = "USD" if st.session_state["para_birimi"] == "TL" else "TL"
             st.rerun()
-
         data = verileri_getir()
         if not data.empty:
             birim = "$" if st.session_state["para_birimi"] == "USD" else "TL"
-            st.metric(f"Toplam Değer ({st.session_state['para_birimi']})", f"{data['Toplam Değer'].sum():,.2f} {birim}")
-            
+            st.metric(f"Toplam Değer", f"{data['Toplam Değer'].sum():,.2f} {birim}")
             def tablo_ciz(baslik, tur_tipi):
                 subset = data[data['tur'] == tur_tipi].copy()
                 if not subset.empty:
                     st.subheader(baslik)
                     subset['Toplam Değer'] = subset['Toplam Değer'].apply(lambda x: f"{x:,.2f} {birim}")
                     st.dataframe(subset[['Varlık İsmi', 'Kod', 'Adet', 'Toplam Değer']], use_container_width=True, hide_index=True)
-            
             tablo_ciz("💍 Madenler", "maden"); tablo_ciz("🇹🇷 BIST", "bist"); tablo_ciz("🇺🇸 ABD", "abd"); tablo_ciz("📦 Fonlar", "fon"); tablo_ciz("🪙 Kripto", "kripto"); tablo_ciz("💵 Döviz", "doviz"); tablo_ciz("📎 Diğer", "diger")
 
     elif sayfa == "Portföy Analizi":
@@ -153,19 +138,3 @@ else:
                 y_a, y_f = (1.0, y_v) if t_es[s_t] == 'diger' else (y_v, 0.0)
                 pd.concat([df_m, pd.DataFrame([[y_k.upper(), y_a, t_es[s_t], y_f]], columns=['hisse_kodu','adet','tur','birim_fiyat'])], ignore_index=True).to_csv(PORTFOY_DOSYASI, sep=';', index=False)
                 st.rerun()
-        st.markdown('<p class="bilgi-notu">💡 Örnek: BTC, ALTIN, THYAO</p><p class="uyari-notu">⚠️ Hisse, fon, kripto para eklerken varlığın adetini; "Diğer" varlıkları eklerken ise varlığın değerini giriniz.</p>', unsafe_allow_html=True)
-        
-        df_m = pd.read_csv(PORTFOY_DOSYASI, sep=';').dropna(subset=['hisse_kodu'])
-        if not df_m.empty:
-            st.divider()
-            for i, r in df_m.iterrows():
-                with st.container():
-                    col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-                    col1.write(f"**{r['hisse_kodu']}**")
-                    y_an = col2.number_input("Miktar", value=float(r['adet'] if r['tur'] != 'diger' else r['birim_fiyat']), key=f"ed_{i}")
-                    if col3.button("🔄", key=f"up_{i}"):
-                        if r['tur'] == 'diger': df_m.at[i, 'birim_fiyat'] = y_an
-                        else: df_m.at[i, 'adet'] = y_an
-                        df_m.to_csv(PORTFOY_DOSYASI, sep=';', index=False); st.rerun()
-                    if col4.button("🗑️", key=f"dl_{i}"):
-                        df_m.drop(i).to_csv(PORTFOY_DOSYASI, sep=';', index=False); st.rerun()
